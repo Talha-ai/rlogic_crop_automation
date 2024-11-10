@@ -33,78 +33,37 @@ def remove_dark_background(image, threshold=30, min_area_ratio=0.1, padding=10):
     # Get the screen contour
     screen_contour = max(valid_contours, key=lambda x: x[0])[1]
 
-    # Approximate the contour to get a polygon
-    epsilon = 0.02 * cv2.arcLength(screen_contour, True)
-    approx = cv2.approxPolyDP(screen_contour, epsilon, True)
+    # Create a mask for the screen area
+    screen_mask = np.zeros_like(gray)
+    cv2.drawContours(screen_mask, [screen_contour], -1, (255, 255, 255), -1)
 
-    # Get corners for perspective transform
-    if len(approx) == 4:
-        corners = approx
-    else:
-        # If we don't get exactly 4 points, use the bounding rectangle
-        rect = cv2.minAreaRect(screen_contour)
-        corners = np.int0(cv2.boxPoints(rect))
+    # Get screen boundaries
+    x, y, w, h = cv2.boundingRect(screen_contour)
 
-    # Order points in [top-left, top-right, bottom-right, bottom-left] order
-    def order_points(pts):
-        rect = np.zeros((4, 2), dtype="float32")
+    # Add padding to ensure clean edges
+    x += padding
+    y += padding
+    w -= 2 * padding
+    h -= 2 * padding
 
-        # Sum the x+y coordinates - top-left will have smallest sum
-        s = pts.sum(axis=1)
-        rect[0] = pts[np.argmin(s)]
-        rect[2] = pts[np.argmax(s)]
+    # Ensure we don't exceed image boundaries
+    x = max(0, x)
+    y = max(0, y)
+    w = min(w, image.shape[1] - x)
+    h = min(h, image.shape[0] - y)
 
-        # Diff the coordinates - top-right will have smallest difference
-        diff = np.diff(pts, axis=1)
-        rect[1] = pts[np.argmin(diff)]
-        rect[3] = pts[np.argmax(diff)]
-
-        return rect
-
-    corners = order_points(corners.reshape(4, 2))
-
-    # Calculate the width and height of the new image
-    width_a = np.sqrt(((corners[2][0] - corners[3][0]) ** 2) + ((corners[2][1] - corners[3][1]) ** 2))
-    width_b = np.sqrt(((corners[1][0] - corners[0][0]) ** 2) + ((corners[1][1] - corners[0][1]) ** 2))
-    max_width = max(int(width_a), int(width_b))
-
-    height_a = np.sqrt(((corners[1][0] - corners[2][0]) ** 2) + ((corners[1][1] - corners[2][1]) ** 2))
-    height_b = np.sqrt(((corners[0][0] - corners[3][0]) ** 2) + ((corners[0][1] - corners[3][1]) ** 2))
-    max_height = max(int(height_a), int(height_b))
-
-    # Define destination points for perspective transform
-    dst = np.array([
-        [padding, padding],
-        [max_width - padding, padding],
-        [max_width - padding, max_height - padding],
-        [padding, max_height - padding]
-    ], dtype="float32")
-
-    # Calculate perspective transform matrix and apply it
-    matrix = cv2.getPerspectiveTransform(corners, dst)
-    warped = cv2.warpPerspective(image, matrix, (max_width, max_height))
-
-    # Create debug image showing the detected corners
+    # Create debug image showing the detected screen area
     debug_image = image.copy()
-    for i in range(4):
-        cv2.circle(debug_image, tuple(corners[i].astype(int)), 5, (0, 255, 0), -1)
-        cv2.line(debug_image,
-                tuple(corners[i].astype(int)),
-                tuple(corners[(i+1)%4].astype(int)),
-                (0, 255, 0), 2)
+    cv2.rectangle(debug_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-    # Remove any remaining black borders
-    gray_warped = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray_warped, threshold, 255, cv2.THRESH_BINARY)
-    coords = cv2.findNonZero(thresh)
-    if coords is not None:
-        x, y, w, h = cv2.boundingRect(coords)
-        final_image = warped[y:y+h, x:x+w]
-    else:
-        final_image = warped
+    # Create the output image
+    # output = np.full_like(image, [255, 255, 255])  # White background
 
-    return final_image, debug_image
+    # Copy the screen area exactly as is
+    screen_area = image[y:y+h, x:x+w]
+    # output[y:y+h, x:x+w] = screen_area
 
+    return screen_area, debug_image
 def process_dataset(input_path, output_path):
     # Create the output directory if it doesn't exist
     os.makedirs(output_path, exist_ok=True)
